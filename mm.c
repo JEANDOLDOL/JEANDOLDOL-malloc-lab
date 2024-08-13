@@ -181,14 +181,24 @@ static void *find_fit(size_t asize)
     }
 
     // 힙의 시작부터 이전 위치까지 검색
-    for (bp = heap_listp; bp != saved_listp; bp = NEXT_BLKP(bp))
+    bp = heap_listp;
+    while (bp != saved_listp)
     {
-        if (!GET_ALLOC(HDRP(bp)) && (GET_SIZE(HDRP(bp)) >= asize))
+        if ((GET_SIZE(HDRP(bp)) >= asize) && GET_ALLOC(HDRP(bp)) == 0) // 해당블록이 asize보다 크거나 같다면, 가용하다면
         {
             saved_listp = bp;
-            return bp;
+            return bp; // 그 포인터 반환
         }
+        bp = NEXT_BLKP(bp); // 아니라면 포인터 다음으로 넘겨.
     }
+    // for (bp = heap_listp; bp != saved_listp; bp = NEXT_BLKP(bp))
+    // {
+    //     if (!GET_ALLOC(HDRP(bp)) && (GET_SIZE(HDRP(bp)) >= asize))
+    //     {
+    //         saved_listp = bp;
+    //         return bp;
+    //     }
+    // }
     return NULL;
 }
 
