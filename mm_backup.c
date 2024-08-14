@@ -36,8 +36,7 @@ team_t team = {
 /* single word (4) or double word (8) alignment */
 #define ALIGNMENT 8
 
-/* 기본 매크로 */ ////////////// 명가리로 진화 /////////////////////////////
-
+/* 기본 매크로 */
 #define WSIZE 4             // 워드와 헤더 푸터 사이즈를 4바이트로 설정
 #define DSIZE 8             // 더블워드 사이즈를 8바이트로 설정
 #define CHUNKSIZE (1 << 12) // heap을 늘릴 사이즈를 설정. *비트연산자* 약 4kb.
@@ -57,11 +56,6 @@ team_t team = {
 /* bp : 블록 포인터, header 와 footer의 주소를 계산. */
 #define HDRP(bp) ((char *)(bp) - WSIZE)
 #define FTRP(bp) ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
-
-/* bp : 블록 포인터, 앞&뒤 가용 블록의 주소를 계산한다. ----> 명가리에서 사용하려고 만듬 */
-static char *NEXT_FBLKP;                               //((char *)(bp) + WSIZE) successor
-static char *PREV_FBLKP;                               //((char *)(bp))         // predecessor
-#define PUTPTR(p, val) (*(void **)(p) = (void *)(val)) // 포인터를 참조하기 위해 더블포인터를 썼구나. 더블 포인터를 언제쓰나 아직 헷갈렸는데 이때 쓰면 되겠네.
 
 /* bp : 블록 포인터, 앞&뒤 블록의 주소를 계산한다. */
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
@@ -106,7 +100,6 @@ static void *coalesce(void *bp)
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));                               // 다음 블록 푸터에 사이즈 넣음
         bp = PREV_BLKP(bp);                                                    // 포인터를 이전블록 포인터로 바꿈(통합됐으니)
     }
-    mm_unite_fblck(bp);
     saved_listp = bp;
     return bp;
 }
@@ -127,6 +120,7 @@ static void *extend_heap(size_t words)
     PUT(HDRP(bp), PACK(size, 0));         // free block header 초기화. prologue block이랑 다름.
     PUT(FTRP(bp), PACK(size, 0));         // free block footer 초기화.
     PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); // 블록을 추가했으니, epilogue header의 위치를 새롭게 조정해줌.
+
     /* 만약 앞뒤 블록이 free 라면, coalesce해라. */
     return coalesce(bp);
 }
@@ -212,13 +206,11 @@ static void place(void *bp, size_t asize)
         bp = NEXT_BLKP(bp);                    // regular block만큼 하나 이동해서 bp 위치 갱신.
         PUT(HDRP(bp), PACK(csize - asize, 0)); // 나머지 블록은(csize-asize) 다 가용하다(0)하다라는걸 다음 헤더에 표시.
         PUT(FTRP(bp), PACK(csize - asize, 0)); // 푸터에도 표시.
-        mm_isolate_fblck(bp);
     }
     else
     {
         PUT(HDRP(bp), PACK(csize, 1)); // 위의 조건이 아니면 asize만 csize에 들어갈 수 있으니까 내가 다 먹는다.
         PUT(FTRP(bp), PACK(csize, 1));
-        mm_isolate_fblck(bp);
     }
 }
 
@@ -296,72 +288,4 @@ void *mm_realloc(void *ptr, size_t size)
     memcpy(newptr, oldptr, copySize);
     mm_free(oldptr);
     return newptr;
-}
-
-// 해당 가용블록의 앞뒤로 처음오는 가용블록을 찾아 포인터로 엮어주는 역할을 하는 함수. 일단 만들어보고 어디다 써먹어 볼지 생각해보자
-// 해당 블록의 앞, 뒤 블록의 포인터도 한번에 바꿔줘야 하나?
-void mm_unite_fblck(char *bp)
-{
-    char *bbp;
-    bbp = bp;
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bbp))); // 이전 블록이 할당인지
-    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bbp))); // 이후 블록이 할당인지
-
-    while (GET_SIZE(HDRP(bbp)) > 0)
-    {
-        // 다음 가용 블록을 찾았다면
-        if (next_alloc == 0)
-        {
-            NEXT_FBLKP = NEXT_BLKP(bbp);
-            PUTPTR((bp + WSIZE), NEXT_FBLKP); // 해당위치 payload에 다음 블록의 포인터값을 넣는다. ** NEXT_FBLKP 와 PUT의 val과 형식이 안맞는다! -> 해결 **
-            PUTPTR(NEXT_FBLKP, bp);           // 다음 가용 블록 PREV_FBLKP을 현재 블록으로 바꿔줌.
-            break;
-        }
-        bbp = NEXT_BLKP(bbp);
-    }
-    bbp = bp;
-    while (GET_SIZE(HDRP(bbp)) > 0)
-    {
-        if (prev_alloc == 0)
-        {
-            PREV_FBLKP = PREV_BLKP(bbp);
-            PUTPTR((bp), PREV_FBLKP);       // 해당위치 payload에 이전 블록의 포인터값을 넣는다. ** NEXT_FBLKP 와 PUT의 val과 형식이 안맞는다! -> 해결 **
-            PUTPTR(PREV_FBLKP + WSIZE, bp); // 이전 가용 블록 NEXT_FBLKP을 현재 블록으로 바꿔줌.
-            break;
-        }
-        bbp = PREV_BLKP(bbp);
-    }
-    return;
-}
-
-// 블록이 할당되었을 때 전 가용블럭과 후 가용블럭을 잇자.
-void mm_isolate_fblck(void *bp)
-{
-    char *bbp;
-    bbp = bp;
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bbp))); // 이전 블록이 할당인지
-    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bbp))); // 이후 블록이 할당인지
-
-    while (GET_SIZE(HDRP(bbp)) > 0)
-    {
-        // 다음 가용 블록을 찾았다면
-        if (next_alloc == 0)
-        {
-            NEXT_FBLKP = NEXT_BLKP(bbp);
-            break;
-        }
-        bbp = NEXT_BLKP(bbp);
-    }
-    bbp = bp;
-    while (GET_SIZE(HDRP(bbp)) > 0)
-    {
-        if (prev_alloc == 0)
-        {
-            PREV_FBLKP = PREV_BLKP(bbp);
-            PUTPTR(PREV_FBLKP + WSIZE, NEXT_FBLKP); // 이전 가용 블록과 다음 가용블록 연결
-            PUTPTR(NEXT_FBLKP, PREV_FBLKP);         // 다음 가용 블록과 이전 가용블록 연결.
-            break;
-        }
-        bbp = PREV_BLKP(bbp);
-    }
 }
